@@ -1,13 +1,33 @@
 from pathlib import Path
 import re
-import subprocess
 import shutil
+import socket
+import subprocess
 
 
 class ServerAdapter:
     def __init__(self, server_path):
         self.server_path = Path(server_path)
         self.process = None
+
+    # =========================================================
+    # VALIDACIÓN BÁSICA
+    # =========================================================
+
+    def validate_server_path(self):
+        if not self.server_path.exists():
+            raise RuntimeError(
+                f"No existe la carpeta del servidor:\n{self.server_path}"
+            )
+
+        if not self.server_path.is_dir():
+            raise RuntimeError(
+                f"La ruta no es una carpeta:\n{self.server_path}"
+            )
+
+    # =========================================================
+    # LOADER
+    # =========================================================
 
     def detect_fabric_from_jar(self):
         pattern = re.compile(
@@ -16,7 +36,7 @@ class ServerAdapter:
         )
 
         for file in self.server_path.glob("*.jar"):
-            match = pattern.match(file.name)
+            match = pattern.fullmatch(file.name)
 
             if match:
                 return {
@@ -39,6 +59,12 @@ class ServerAdapter:
         }
 
     def detect_loader(self):
+        self.validate_server_path()
+
+        # -------------------------
+        # FABRIC
+        # -------------------------
+
         fabric = self.detect_fabric_from_jar()
 
         if fabric:
@@ -49,14 +75,25 @@ class ServerAdapter:
         if not libraries.exists():
             return self.unknown_loader()
 
-        neoforge_path = libraries / "net" / "neoforged" / "neoforge"
+        # -------------------------
+        # NEOFORGE
+        # -------------------------
+
+        neoforge_path = (
+            libraries
+            / "net"
+            / "neoforged"
+            / "neoforge"
+        )
 
         if neoforge_path.exists():
-            versions = [
-                x.name
-                for x in neoforge_path.iterdir()
-                if x.is_dir()
-            ]
+            versions = sorted(
+                [
+                    folder.name
+                    for folder in neoforge_path.iterdir()
+                    if folder.is_dir()
+                ]
+            )
 
             if versions:
                 return {
@@ -67,14 +104,25 @@ class ServerAdapter:
                     "jar": None
                 }
 
-        forge_path = libraries / "net" / "minecraftforge" / "forge"
+        # -------------------------
+        # FORGE
+        # -------------------------
+
+        forge_path = (
+            libraries
+            / "net"
+            / "minecraftforge"
+            / "forge"
+        )
 
         if forge_path.exists():
-            versions = [
-                x.name
-                for x in forge_path.iterdir()
-                if x.is_dir()
-            ]
+            versions = sorted(
+                [
+                    folder.name
+                    for folder in forge_path.iterdir()
+                    if folder.is_dir()
+                ]
+            )
 
             if versions:
                 version = versions[-1]
@@ -100,6 +148,10 @@ class ServerAdapter:
 
         return self.unknown_loader()
 
+    # =========================================================
+    # MINECRAFT
+    # =========================================================
+
     def detect_minecraft_version(self):
         loader = self.detect_loader()
 
@@ -109,15 +161,26 @@ class ServerAdapter:
         versions_path = self.server_path / "versions"
 
         if versions_path.exists():
+            versions = []
+
             for folder in versions_path.iterdir():
-                if folder.is_dir():
-                    if re.fullmatch(
-                        r"\d+\.\d+(?:\.\d+)?",
-                        folder.name
-                    ):
-                        return folder.name
+                if not folder.is_dir():
+                    continue
+
+                if re.fullmatch(
+                    r"\d+\.\d+(?:\.\d+)?",
+                    folder.name
+                ):
+                    versions.append(folder.name)
+
+            if versions:
+                return sorted(versions)[-1]
 
         return "unknown"
+
+    # =========================================================
+    # MODS
+    # =========================================================
 
     def count_mods(self):
         mods_path = self.server_path / "mods"
@@ -129,21 +192,26 @@ class ServerAdapter:
             list(mods_path.glob("*.jar"))
         )
 
+    # =========================================================
+    # SERVER.PROPERTIES
+    # =========================================================
+
     def read_server_properties(self):
-        props_path = (
-            self.server_path /
-            "server.properties"
+        properties_path = (
+            self.server_path
+            / "server.properties"
         )
 
-        data = {}
+        properties = {}
 
-        if not props_path.exists():
-            return data
+        if not properties_path.exists():
+            return properties
 
         with open(
-            props_path,
+            properties_path,
             "r",
-            encoding="utf-8"
+            encoding="utf-8",
+            errors="replace"
         ) as file:
 
             for line in file:
@@ -155,15 +223,60 @@ class ServerAdapter:
                 if line.startswith("#"):
                     continue
 
-                if "=" in line:
-                    key, value = line.split(
-                        "=",
-                        1
-                    )
+                if "=" not in line:
+                    continue
 
-                    data[key] = value
+                key, value = line.split(
+                    "=",
+                    1
+                )
 
-        return data
+                properties[key.strip()] = value.strip()
+
+        return properties
+
+    def get_server_port(self):
+        properties = self.read_server_properties()
+
+        try:
+            return int(
+                properties.get(
+                    "server-port",
+                    "25565"
+                )
+            )
+
+        except ValueError:
+            return 25565
+
+    # =========================================================
+    # PUERTO
+    # =========================================================
+
+    def is_port_in_use(self, port=None):
+        if port is None:
+            port = self.get_server_port()
+
+        sock = socket.socket(
+            socket.AF_INET,
+            socket.SOCK_STREAM
+        )
+
+        sock.settimeout(0.4)
+
+        try:
+            result = sock.connect_ex(
+                ("127.0.0.1", port)
+            )
+
+            return result == 0
+
+        finally:
+            sock.close()
+
+    # =========================================================
+    # JAVA
+    # =========================================================
 
     def detect_java(self):
         java_path = shutil.which("java")
@@ -172,14 +285,16 @@ class ServerAdapter:
             return {
                 "found": False,
                 "path": None,
-                "version": None
+                "version": None,
+                "major": None
             }
 
         try:
             result = subprocess.run(
-                ["java", "-version"],
+                [java_path, "-version"],
                 capture_output=True,
-                text=True
+                text=True,
+                timeout=5
             )
 
             output = (
@@ -192,32 +307,97 @@ class ServerAdapter:
                 output
             )
 
-            version = (
-                match.group(1)
-                if match
-                else "unknown"
+            if not match:
+                return {
+                    "found": True,
+                    "path": java_path,
+                    "version": "unknown",
+                    "major": None
+                }
+
+            version = match.group(1)
+
+            major = self.get_java_major(
+                version
             )
 
             return {
                 "found": True,
                 "path": java_path,
-                "version": version
+                "version": version,
+                "major": major
             }
 
         except Exception:
             return {
                 "found": False,
                 "path": java_path,
-                "version": None
+                "version": None,
+                "major": None
             }
 
+    def get_java_major(self, version):
+        try:
+            parts = version.split(".")
+
+            # Java 8 viejo:
+            # 1.8.0_xxx
+            if parts[0] == "1":
+                return int(parts[1])
+
+            # Java moderno:
+            # 17.0.x
+            # 21.0.x
+            return int(parts[0])
+
+        except (ValueError, IndexError):
+            return None
+
+    def required_java_version(self):
+        minecraft = self.detect_minecraft_version()
+
+        if minecraft == "unknown":
+            return None
+
+        try:
+            parts = [
+                int(x)
+                for x in minecraft.split(".")
+            ]
+
+        except ValueError:
+            return None
+
+        while len(parts) < 3:
+            parts.append(0)
+
+        version = tuple(parts[:3])
+
+        if version >= (1, 20, 5):
+            return 21
+
+        if version >= (1, 18, 0):
+            return 17
+
+        if version >= (1, 17, 0):
+            return 16
+
+        return 8
+
+    # =========================================================
+    # INFORMACIÓN GENERAL
+    # =========================================================
+
     def inspect(self):
+        self.validate_server_path()
+
         loader = self.detect_loader()
-        props = self.read_server_properties()
+        properties = self.read_server_properties()
         java = self.detect_java()
 
         return {
-            "server_path": str(self.server_path),
+            "server_path":
+                str(self.server_path),
 
             "minecraft_version":
                 self.detect_minecraft_version(),
@@ -238,19 +418,16 @@ class ServerAdapter:
                 self.count_mods(),
 
             "world":
-                props.get(
+                properties.get(
                     "level-name",
                     "world"
                 ),
 
             "port":
-                props.get(
-                    "server-port",
-                    "25565"
-                ),
+                self.get_server_port(),
 
             "max_players":
-                props.get(
+                properties.get(
                     "max-players",
                     "unknown"
                 ),
@@ -262,8 +439,18 @@ class ServerAdapter:
                 java["path"],
 
             "java_version":
-                java["version"]
+                java["version"],
+
+            "java_major":
+                java["major"],
+
+            "java_required":
+                self.required_java_version()
         }
+
+    # =========================================================
+    # PROCESO
+    # =========================================================
 
     def is_running(self):
         return (
@@ -271,10 +458,25 @@ class ServerAdapter:
             and self.process.poll() is None
         )
 
-    def start(self, min_ram="4G", max_ram="8G"):
+    def start(
+        self,
+        min_ram="4G",
+        max_ram="8G"
+    ):
+        self.validate_server_path()
+
         if self.is_running():
             raise RuntimeError(
-                "El servidor ya está iniciado."
+                "El servidor ya está iniciado por este manager."
+            )
+
+        port = self.get_server_port()
+
+        if self.is_port_in_use(port):
+            raise RuntimeError(
+                f"El puerto {port} ya está ocupado.\n"
+                "Es posible que ya exista otro servidor "
+                "de Minecraft ejecutándose."
             )
 
         loader = self.detect_loader()
@@ -285,9 +487,31 @@ class ServerAdapter:
                 "Java no fue encontrado."
             )
 
+        required = self.required_java_version()
+
+        if (
+            required is not None
+            and java["major"] is not None
+            and java["major"] < required
+        ):
+            raise RuntimeError(
+                f"Minecraft necesita Java {required} "
+                f"o superior, pero encontré Java "
+                f"{java['major']}."
+            )
+
+        # Por ahora nuestro launcher real funciona
+        # con Fabric.
+        if loader["type"] != "fabric":
+            raise RuntimeError(
+                f"Se detectó {loader['type']}, "
+                "pero todavía no implementamos "
+                "su método de inicio."
+            )
+
         if not loader["jar"]:
             raise RuntimeError(
-                "No se encontró el JAR del servidor."
+                "No se encontró el JAR de Fabric."
             )
 
         command = [
@@ -301,11 +525,13 @@ class ServerAdapter:
 
         self.process = subprocess.Popen(
             command,
-            cwd=self.server_path,
+            cwd=str(self.server_path),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1
         )
 
@@ -315,6 +541,12 @@ class ServerAdapter:
         if not self.is_running():
             raise RuntimeError(
                 "El servidor no está iniciado."
+            )
+
+        if self.process.stdin is None:
+            raise RuntimeError(
+                "No está disponible la entrada "
+                "de comandos del servidor."
             )
 
         self.process.stdin.write(
@@ -330,5 +562,17 @@ class ServerAdapter:
         self.send_command("stop")
 
     def kill(self):
-        if self.is_running():
-            self.process.kill()
+        if not self.is_running():
+            return
+
+        self.process.kill()
+
+    def wait(self):
+        if self.process is None:
+            return None
+
+        return_code = self.process.wait()
+
+        self.process = None
+
+        return return_code

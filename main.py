@@ -5,12 +5,11 @@ from gui import ServerGUI
 SERVER_PATH = r"C:\Minecraft\HORIZONS_CHUNK_SERVER\Server"
 
 
-adapter = ServerAdapter(
-    SERVER_PATH
-)
+def main():
+    adapter = ServerAdapter(SERVER_PATH)
+    app = ServerGUI(adapter)
+    app.run()
 
-app = ServerGUI(
-    adapter
-)
 
-app.run()
+if __name__ == "__main__":
+    main()
