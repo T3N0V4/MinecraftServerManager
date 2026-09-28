@@ -5,9 +5,12 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import scrolledtext
 from tkinter import messagebox
+from tkinter import filedialog
+
+from server_adapter import ServerAdapter
 
 
-class ServerGUI:
+class ServerManagerGUI:
     LOG_LEVEL_PATTERN = re.compile(
         r"\[[^\]]+/(INFO|WARN|WARNING|ERROR|FATAL)\]:",
         re.IGNORECASE
@@ -20,30 +23,22 @@ class ServerGUI:
         re.IGNORECASE
     )
 
-    def __init__(self, adapter):
-        self.adapter = adapter
+    def __init__(self, profile_manager):
+        self.profile_manager = profile_manager
+
+        self.adapter = None
+        self.profile = None
+        self.info = None
 
         self.root = tk.Tk()
-
-        self.root.title(
-            "Minecraft Server Manager"
-        )
-
-        self.root.geometry(
-            "1200x760"
-        )
-
-        self.root.minsize(
-            950,
-            650
-        )
+        self.root.title("Minecraft Server Manager")
+        self.root.geometry("1250x800")
+        self.root.minsize(1000, 650)
 
         self.root.protocol(
             "WM_DELETE_WINDOW",
             self.on_close
         )
-
-        self.info = self.adapter.inspect()
 
         self.counters = {
             "info": 0,
@@ -55,10 +50,6 @@ class ServerGUI:
 
         self.console_widgets = {}
 
-        # Bloque activo:
-        # None
-        # "warning"
-        # "error"
         self.active_block_type = None
         self.active_block_lines = []
 
@@ -68,13 +59,691 @@ class ServerGUI:
         self.warning_number = 0
         self.error_number = 0
 
-        self.create_interface()
+        self.create_main_interface()
+        self.load_initial_profile()
 
     # =========================================================
-    # INTERFAZ
+    # PESTAÑAS PRINCIPALES
     # =========================================================
 
-    def create_interface(self):
+    def create_main_interface(self):
+        self.main_notebook = ttk.Notebook(
+            self.root
+        )
+
+        self.main_notebook.pack(
+            fill="both",
+            expand=True
+        )
+
+        self.home_page = ttk.Frame(
+            self.main_notebook
+        )
+
+        self.launcher_page = ttk.Frame(
+            self.main_notebook
+        )
+
+        self.server_page = ttk.Frame(
+            self.main_notebook
+        )
+
+        self.main_notebook.add(
+            self.home_page,
+            text="INICIO"
+        )
+
+        self.main_notebook.add(
+            self.launcher_page,
+            text="LAUNCHER"
+        )
+
+        self.main_notebook.add(
+            self.server_page,
+            text="SERVIDOR"
+        )
+
+        self.create_home_page()
+        self.create_launcher_page()
+        self.create_server_page()
+
+    # =========================================================
+    # INICIO
+    # =========================================================
+
+    def create_home_page(self):
+        title = ttk.Label(
+            self.home_page,
+            text="Minecraft Server Manager",
+            font=("Segoe UI", 22, "bold")
+        )
+
+        title.pack(
+            pady=(40, 10)
+        )
+
+        ttk.Label(
+            self.home_page,
+            text=(
+                "Administrá versiones, loaders, "
+                "modpacks y servidores desde un solo lugar."
+            )
+        ).pack(
+            pady=5
+        )
+
+        self.home_profile_label = ttk.Label(
+            self.home_page,
+            text="Perfil activo: Ninguno",
+            font=("Segoe UI", 13, "bold")
+        )
+
+        self.home_profile_label.pack(
+            pady=(40, 5)
+        )
+
+        self.home_info_label = ttk.Label(
+            self.home_page,
+            text=""
+        )
+
+        self.home_info_label.pack(
+            pady=5
+        )
+
+        ttk.Button(
+            self.home_page,
+            text="Ir al Launcher",
+            command=lambda:
+                self.main_notebook.select(
+                    self.launcher_page
+                )
+        ).pack(
+            pady=20
+        )
+
+    # =========================================================
+    # LAUNCHER
+    # =========================================================
+
+    def create_launcher_page(self):
+        frame = ttk.Frame(
+            self.launcher_page,
+            padding=25
+        )
+
+        frame.pack(
+            fill="both",
+            expand=True
+        )
+
+        ttk.Label(
+            frame,
+            text="Launcher",
+            font=("Segoe UI", 20, "bold")
+        ).pack(
+            anchor="w"
+        )
+
+        ttk.Label(
+            frame,
+            text=(
+                "Seleccioná o importá una "
+                "instancia de servidor."
+            )
+        ).pack(
+            anchor="w",
+            pady=(5, 25)
+        )
+
+        profile_frame = ttk.LabelFrame(
+            frame,
+            text="Perfil",
+            padding=15
+        )
+
+        profile_frame.pack(
+            fill="x",
+            pady=10
+        )
+
+        self.profile_combo = ttk.Combobox(
+            profile_frame,
+            state="readonly",
+            width=40
+        )
+
+        self.profile_combo.pack(
+            side="left",
+            padx=(0, 10)
+        )
+
+        self.profile_combo.bind(
+            "<<ComboboxSelected>>",
+            self.on_profile_selected
+        )
+
+        ttk.Button(
+            profile_frame,
+            text="Actualizar",
+            command=self.refresh_profiles
+        ).pack(
+            side="left",
+            padx=5
+        )
+
+        ttk.Button(
+            profile_frame,
+            text="Eliminar",
+            command=self.delete_current_profile
+        ).pack(
+            side="left",
+            padx=5
+        )
+
+        import_frame = ttk.LabelFrame(
+            frame,
+            text="Importar servidor existente",
+            padding=15
+        )
+
+        import_frame.pack(
+            fill="x",
+            pady=10
+        )
+
+        ttk.Label(
+            import_frame,
+            text="Nombre:"
+        ).grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=5,
+            pady=5
+        )
+
+        self.profile_name_entry = ttk.Entry(
+            import_frame,
+            width=40
+        )
+
+        self.profile_name_entry.grid(
+            row=0,
+            column=1,
+            sticky="ew",
+            padx=5,
+            pady=5
+        )
+
+        ttk.Label(
+            import_frame,
+            text="Carpeta:"
+        ).grid(
+            row=1,
+            column=0,
+            sticky="w",
+            padx=5,
+            pady=5
+        )
+
+        self.server_path_entry = ttk.Entry(
+            import_frame,
+            width=70
+        )
+
+        self.server_path_entry.grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=5,
+            pady=5
+        )
+
+        ttk.Button(
+            import_frame,
+            text="Examinar",
+            command=self.browse_server_folder
+        ).grid(
+            row=1,
+            column=2,
+            padx=5
+        )
+
+        ttk.Label(
+            import_frame,
+            text="RAM mínima:"
+        ).grid(
+            row=2,
+            column=0,
+            sticky="w",
+            padx=5,
+            pady=5
+        )
+
+        self.min_ram_entry = ttk.Entry(
+            import_frame,
+            width=10
+        )
+
+        self.min_ram_entry.insert(
+            0,
+            "4G"
+        )
+
+        self.min_ram_entry.grid(
+            row=2,
+            column=1,
+            sticky="w",
+            padx=5,
+            pady=5
+        )
+
+        ttk.Label(
+            import_frame,
+            text="RAM máxima:"
+        ).grid(
+            row=3,
+            column=0,
+            sticky="w",
+            padx=5,
+            pady=5
+        )
+
+        self.max_ram_entry = ttk.Entry(
+            import_frame,
+            width=10
+        )
+
+        self.max_ram_entry.insert(
+            0,
+            "8G"
+        )
+
+        self.max_ram_entry.grid(
+            row=3,
+            column=1,
+            sticky="w",
+            padx=5,
+            pady=5
+        )
+
+        ttk.Button(
+            import_frame,
+            text="IMPORTAR SERVIDOR",
+            command=self.import_existing_server
+        ).grid(
+            row=4,
+            column=0,
+            columnspan=3,
+            pady=20
+        )
+
+        import_frame.columnconfigure(
+            1,
+            weight=1
+        )
+
+        info_frame = ttk.LabelFrame(
+            frame,
+            text="Instancia detectada",
+            padding=15
+        )
+
+        info_frame.pack(
+            fill="x",
+            pady=10
+        )
+
+        self.launcher_info_label = ttk.Label(
+            info_frame,
+            text="Ningún perfil seleccionado."
+        )
+
+        self.launcher_info_label.pack(
+            anchor="w"
+        )
+
+    def browse_server_folder(self):
+        folder = filedialog.askdirectory(
+            title="Seleccionar carpeta del servidor"
+        )
+
+        if not folder:
+            return
+
+        self.server_path_entry.delete(
+            0,
+            "end"
+        )
+
+        self.server_path_entry.insert(
+            0,
+            folder
+        )
+
+    def refresh_profiles(self):
+        names = (
+            self.profile_manager
+            .get_profile_names()
+        )
+
+        self.profile_combo[
+            "values"
+        ] = names
+
+    def load_initial_profile(self):
+        self.refresh_profiles()
+
+        profile = (
+            self.profile_manager
+            .get_active_profile()
+        )
+
+        if not profile:
+            return
+
+        self.profile_combo.set(
+            profile["name"]
+        )
+
+        self.load_profile(
+            profile
+        )
+
+    def on_profile_selected(
+        self,
+        event=None
+    ):
+        name = (
+            self.profile_combo
+            .get()
+            .strip()
+        )
+
+        if not name:
+            return
+
+        profile = (
+            self.profile_manager
+            .load_profile(name)
+        )
+
+        if not profile:
+            return
+
+        self.profile_manager.set_active_profile(
+            name
+        )
+
+        self.load_profile(
+            profile
+        )
+
+    def import_existing_server(self):
+        name = (
+            self.profile_name_entry
+            .get()
+            .strip()
+        )
+
+        server_path = (
+            self.server_path_entry
+            .get()
+            .strip()
+        )
+
+        if not name:
+            messagebox.showerror(
+                "Error",
+                "Poné un nombre al perfil."
+            )
+            return
+
+        if not server_path:
+            messagebox.showerror(
+                "Error",
+                "Seleccioná una carpeta."
+            )
+            return
+
+        try:
+            adapter = ServerAdapter(
+                server_path
+            )
+
+            info = adapter.inspect()
+
+            profile = (
+                self.profile_manager
+                .create_profile(
+                    name=name,
+                    server_path=server_path,
+                    min_ram=(
+                        self.min_ram_entry
+                        .get()
+                        .strip()
+                        or "4G"
+                    ),
+                    max_ram=(
+                        self.max_ram_entry
+                        .get()
+                        .strip()
+                        or "8G"
+                    )
+                )
+            )
+
+            profile[
+                "minecraft"
+            ][
+                "version"
+            ] = info[
+                "minecraft_version"
+            ]
+
+            profile[
+                "loader"
+            ][
+                "type"
+            ] = info[
+                "loader"
+            ]
+
+            profile[
+                "loader"
+            ][
+                "version"
+            ] = info[
+                "loader_version"
+            ]
+
+            self.profile_manager.save_profile(
+                profile
+            )
+
+            self.profile_manager.set_active_profile(
+                profile["name"]
+            )
+
+            self.refresh_profiles()
+
+            self.profile_combo.set(
+                profile["name"]
+            )
+
+            self.load_profile(
+                profile
+            )
+
+            messagebox.showinfo(
+                "Servidor importado",
+                (
+                    f"Perfil '{name}' creado.\n\n"
+                    f"Minecraft: "
+                    f"{info['minecraft_version']}\n"
+                    f"Loader: "
+                    f"{info['loader']} "
+                    f"{info['loader_version']}"
+                )
+            )
+
+        except Exception as error:
+            messagebox.showerror(
+                "No se pudo importar",
+                str(error)
+            )
+
+    def load_profile(
+        self,
+        profile
+    ):
+        if (
+            self.adapter
+            and self.adapter.is_running()
+        ):
+            messagebox.showwarning(
+                "Servidor activo",
+                (
+                    "No podés cambiar de perfil "
+                    "mientras el servidor está corriendo."
+                )
+            )
+            return
+
+        self.profile = profile
+
+        self.adapter = ServerAdapter(
+            profile["server_path"]
+        )
+
+        try:
+            self.info = self.adapter.inspect()
+
+        except Exception as error:
+            self.info = None
+
+            messagebox.showerror(
+                "Perfil inválido",
+                str(error)
+            )
+
+            return
+
+        self.update_profile_display()
+
+    def update_profile_display(self):
+        if not self.profile:
+            return
+
+        info = self.info
+
+        text = (
+            f"Perfil: {self.profile['name']}\n"
+            f"Ruta: {self.profile['server_path']}\n"
+            f"Minecraft: {info['minecraft_version']}\n"
+            f"Loader: {info['loader']} "
+            f"{info['loader_version']}\n"
+            f"Mods: {info['mods']}\n"
+            f"Mundo: {info['world']}\n"
+            f"Puerto: {info['port']}"
+        )
+
+        self.launcher_info_label.config(
+            text=text
+        )
+
+        self.home_profile_label.config(
+            text=(
+                f"Perfil activo: "
+                f"{self.profile['name']}"
+            )
+        )
+
+        self.home_info_label.config(
+            text=(
+                f"Minecraft "
+                f"{info['minecraft_version']} | "
+                f"{info['loader']} "
+                f"{info['loader_version']} | "
+                f"{info['mods']} mods"
+            )
+        )
+
+        self.update_server_header()
+
+    def delete_current_profile(self):
+        name = (
+            self.profile_combo
+            .get()
+            .strip()
+        )
+
+        if not name:
+            return
+
+        if (
+            self.adapter
+            and self.adapter.is_running()
+        ):
+            messagebox.showwarning(
+                "Servidor activo",
+                "Primero detené el servidor."
+            )
+            return
+
+        confirm = messagebox.askyesno(
+            "Eliminar perfil",
+            (
+                f"¿Eliminar el perfil '{name}'?\n\n"
+                "NO se borrará la carpeta "
+                "del servidor."
+            )
+        )
+
+        if not confirm:
+            return
+
+        self.profile_manager.delete_profile(
+            name
+        )
+
+        self.profile = None
+        self.adapter = None
+        self.info = None
+
+        self.profile_combo.set("")
+
+        self.refresh_profiles()
+
+        self.launcher_info_label.config(
+            text="Ningún perfil seleccionado."
+        )
+
+        self.home_profile_label.config(
+            text="Perfil activo: Ninguno"
+        )
+
+        self.home_info_label.config(
+            text=""
+        )
+
+        self.update_server_header()
+
+    # =========================================================
+    # SERVIDOR
+    # =========================================================
+
+    def create_server_page(self):
+        self.server_container = ttk.Frame(
+            self.server_page
+        )
+
+        self.server_container.pack(
+            fill="both",
+            expand=True
+        )
+
         self.create_top_panel()
         self.create_counter_panel()
         self.create_console_tabs()
@@ -83,7 +752,7 @@ class ServerGUI:
 
     def create_top_panel(self):
         frame = ttk.Frame(
-            self.root,
+            self.server_container,
             padding=10
         )
 
@@ -91,66 +760,62 @@ class ServerGUI:
             fill="x"
         )
 
-        minecraft = self.info[
-            "minecraft_version"
-        ]
-
-        loader = self.info[
-            "loader"
-        ]
-
-        loader_version = self.info[
-            "loader_version"
-        ]
-
-        mods = self.info[
-            "mods"
-        ]
-
-        java = self.info[
-            "java_version"
-        ]
-
-        ttk.Label(
+        self.server_profile_label = ttk.Label(
             frame,
-            text=f"Minecraft: {minecraft}"
-        ).pack(
+            text="Perfil: Ninguno"
+        )
+
+        self.server_profile_label.pack(
             side="left",
             padx=10
         )
 
-        ttk.Label(
+        self.server_minecraft_label = ttk.Label(
             frame,
-            text=(
-                f"Loader: "
-                f"{loader} "
-                f"{loader_version}"
-            )
-        ).pack(
+            text="Minecraft: -"
+        )
+
+        self.server_minecraft_label.pack(
             side="left",
             padx=10
         )
 
-        ttk.Label(
+        self.server_loader_label = ttk.Label(
             frame,
-            text=f"Mods: {mods}"
-        ).pack(
+            text="Loader: -"
+        )
+
+        self.server_loader_label.pack(
             side="left",
             padx=10
         )
 
-        ttk.Label(
+        self.server_mods_label = ttk.Label(
             frame,
-            text=f"Java: {java}"
-        ).pack(
+            text="Mods: -"
+        )
+
+        self.server_mods_label.pack(
             side="left",
             padx=10
         )
 
-        ttk.Label(
+        self.server_java_label = ttk.Label(
             frame,
-            text=f"Puerto: {self.info['port']}"
-        ).pack(
+            text="Java: -"
+        )
+
+        self.server_java_label.pack(
+            side="left",
+            padx=10
+        )
+
+        self.server_port_label = ttk.Label(
+            frame,
+            text="Puerto: -"
+        )
+
+        self.server_port_label.pack(
             side="left",
             padx=10
         )
@@ -165,9 +830,80 @@ class ServerGUI:
             padx=10
         )
 
+    def update_server_header(self):
+        if not self.info or not self.profile:
+            self.server_profile_label.config(
+                text="Perfil: Ninguno"
+            )
+
+            self.server_minecraft_label.config(
+                text="Minecraft: -"
+            )
+
+            self.server_loader_label.config(
+                text="Loader: -"
+            )
+
+            self.server_mods_label.config(
+                text="Mods: -"
+            )
+
+            self.server_java_label.config(
+                text="Java: -"
+            )
+
+            self.server_port_label.config(
+                text="Puerto: -"
+            )
+
+            return
+
+        self.server_profile_label.config(
+            text=(
+                f"Perfil: "
+                f"{self.profile['name']}"
+            )
+        )
+
+        self.server_minecraft_label.config(
+            text=(
+                f"Minecraft: "
+                f"{self.info['minecraft_version']}"
+            )
+        )
+
+        self.server_loader_label.config(
+            text=(
+                f"Loader: "
+                f"{self.info['loader']} "
+                f"{self.info['loader_version']}"
+            )
+        )
+
+        self.server_mods_label.config(
+            text=(
+                f"Mods: "
+                f"{self.info['mods']}"
+            )
+        )
+
+        self.server_java_label.config(
+            text=(
+                f"Java: "
+                f"{self.info['java_version']}"
+            )
+        )
+
+        self.server_port_label.config(
+            text=(
+                f"Puerto: "
+                f"{self.info['port']}"
+            )
+        )
+
     def create_counter_panel(self):
         frame = ttk.Frame(
-            self.root,
+            self.server_container,
             padding=(10, 0, 10, 10)
         )
 
@@ -227,7 +963,7 @@ class ServerGUI:
 
     def create_console_tabs(self):
         frame = ttk.Frame(
-            self.root,
+            self.server_container,
             padding=10
         )
 
@@ -264,16 +1000,14 @@ class ServerGUI:
                 text=title
             )
 
-            console = (
-                scrolledtext.ScrolledText(
-                    tab_frame,
-                    bg="#111111",
-                    fg="#dddddd",
-                    insertbackground="white",
-                    font=("Consolas", 10),
-                    state="disabled",
-                    wrap="none"
-                )
+            console = scrolledtext.ScrolledText(
+                tab_frame,
+                bg="#111111",
+                fg="#dddddd",
+                insertbackground="white",
+                font=("Consolas", 10),
+                state="disabled",
+                wrap="none"
             )
 
             console.pack(
@@ -324,7 +1058,7 @@ class ServerGUI:
 
     def create_command_panel(self):
         frame = ttk.Frame(
-            self.root,
+            self.server_container,
             padding=10
         )
 
@@ -345,7 +1079,7 @@ class ServerGUI:
         self.command_entry.bind(
             "<Return>",
             lambda event:
-            self.send_command()
+                self.send_command()
         )
 
         ttk.Button(
@@ -359,7 +1093,7 @@ class ServerGUI:
 
     def create_bottom_buttons(self):
         frame = ttk.Frame(
-            self.root,
+            self.server_container,
             padding=10
         )
 
@@ -499,10 +1233,6 @@ class ServerGUI:
             )
         )
 
-    # =========================================================
-    # DETECCIÓN DE NIVEL
-    # =========================================================
-
     def get_explicit_log_level(
         self,
         line
@@ -577,10 +1307,6 @@ class ServerGUI:
 
         return "info"
 
-    # =========================================================
-    # BLOQUES WARN / ERROR
-    # =========================================================
-
     def start_block(
         self,
         block_type,
@@ -641,17 +1367,25 @@ class ServerGUI:
             self.error_number += 1
             self.error_blocks.append(block)
 
-            number = self.error_number
-            title = f"ERROR #{number}"
-            header_tag = "header_error"
+            title = (
+                f"ERROR #{self.error_number}"
+            )
+
+            header_tag = (
+                "header_error"
+            )
 
         else:
             self.warning_number += 1
             self.warning_blocks.append(block)
 
-            number = self.warning_number
-            title = f"WARNING #{number}"
-            header_tag = "header_warning"
+            title = (
+                f"WARNING #{self.warning_number}"
+            )
+
+            header_tag = (
+                "header_warning"
+            )
 
         console = self.console_widgets[
             block_type
@@ -707,10 +1441,6 @@ class ServerGUI:
         self.active_block_type = None
         self.active_block_lines = []
 
-    # =========================================================
-    # PROCESAMIENTO DEL LOG
-    # =========================================================
-
     def process_log_line(
         self,
         line
@@ -721,8 +1451,6 @@ class ServerGUI:
             )
         )
 
-        # Una nueva línea con nivel explícito
-        # termina el bloque anterior.
         if explicit_level is not None:
             self.flush_active_block()
 
@@ -740,7 +1468,6 @@ class ServerGUI:
                 )
                 return
 
-            # INFO
             tag = self.classify_info_line(
                 line
             )
@@ -757,9 +1484,6 @@ class ServerGUI:
 
             return
 
-        # No tiene nuevo nivel explícito.
-        # Si había WARN/ERROR activo,
-        # pertenece al bloque.
         if self.active_block_type:
             self.append_to_active_block(
                 line
@@ -767,8 +1491,6 @@ class ServerGUI:
 
             return
 
-        # Algunas líneas aparecen fuera del
-        # formato normal de Minecraft/Log4j.
         lower = line.lower()
 
         if (
@@ -796,10 +1518,25 @@ class ServerGUI:
         )
 
     # =========================================================
-    # SERVER
+    # CONTROL SERVER
     # =========================================================
 
     def start_server(self):
+        if self.adapter is None:
+            messagebox.showwarning(
+                "Sin servidor",
+                (
+                    "Primero seleccioná o importá "
+                    "un perfil en LAUNCHER."
+                )
+            )
+
+            self.main_notebook.select(
+                self.launcher_page
+            )
+
+            return
+
         if self.adapter.is_running():
             self.write_console(
                 "[MANAGER] "
@@ -820,9 +1557,24 @@ class ServerGUI:
                 text="● INICIANDO"
             )
 
+            memory = (
+                self.profile.get(
+                    "memory",
+                    {}
+                )
+                if self.profile
+                else {}
+            )
+
             process = self.adapter.start(
-                min_ram="4G",
-                max_ram="8G"
+                min_ram=memory.get(
+                    "min",
+                    "4G"
+                ),
+                max_ram=memory.get(
+                    "max",
+                    "8G"
+                )
             )
 
             thread = threading.Thread(
@@ -871,7 +1623,8 @@ class ServerGUI:
 
         return_code = process.wait()
 
-        self.adapter.process = None
+        if self.adapter is not None:
+            self.adapter.process = None
 
         self.root.after(
             0,
@@ -905,7 +1658,10 @@ class ServerGUI:
             )
 
     def stop_server(self):
-        if not self.adapter.is_running():
+        if (
+            self.adapter is None
+            or not self.adapter.is_running()
+        ):
             self.write_console(
                 "[MANAGER] "
                 "El servidor no está iniciado.",
@@ -934,6 +1690,10 @@ class ServerGUI:
             )
 
     def restart_server(self):
+        if self.adapter is None:
+            self.start_server()
+            return
+
         if not self.adapter.is_running():
             self.start_server()
             return
@@ -965,6 +1725,9 @@ class ServerGUI:
             )
 
     def wait_and_restart(self):
+        if self.adapter is None:
+            return
+
         process = self.adapter.process
 
         if process is None:
@@ -976,16 +1739,13 @@ class ServerGUI:
 
         process.wait()
 
-        self.adapter.process = None
+        if self.adapter is not None:
+            self.adapter.process = None
 
         self.root.after(
             1000,
             self.start_server
         )
-
-    # =========================================================
-    # COMANDOS
-    # =========================================================
 
     def send_command(self):
         command = (
@@ -997,7 +1757,10 @@ class ServerGUI:
         if not command:
             return
 
-        if not self.adapter.is_running():
+        if (
+            self.adapter is None
+            or not self.adapter.is_running()
+        ):
             self.write_console(
                 "[MANAGER] "
                 "El servidor no está iniciado.",
@@ -1070,6 +1833,7 @@ class ServerGUI:
             return
 
         self.root.clipboard_clear()
+
         self.root.clipboard_append(
             text
         )
@@ -1106,7 +1870,10 @@ class ServerGUI:
     # =========================================================
 
     def on_close(self):
-        if not self.adapter.is_running():
+        if (
+            self.adapter is None
+            or not self.adapter.is_running()
+        ):
             self.root.destroy()
             return
 
@@ -1137,18 +1904,18 @@ class ServerGUI:
         self.wait_for_close()
 
     def wait_for_close(self):
-        if self.adapter.is_running():
+        if (
+            self.adapter is not None
+            and self.adapter.is_running()
+        ):
             self.root.after(
                 250,
                 self.wait_for_close
             )
+
             return
 
         self.root.destroy()
-
-    # =========================================================
-    # RUN
-    # =========================================================
 
     def run(self):
         self.root.mainloop()

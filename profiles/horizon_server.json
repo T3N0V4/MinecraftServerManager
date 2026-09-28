@@ -1,0 +1,15 @@
+{
+    "name": "Horizon Server",
+    "server_path": "C:\\Minecraft\\HORIZONS_CHUNK_SERVER\\Server",
+    "memory": {
+        "min": "4G",
+        "max": "8G"
+    },
+    "minecraft": {
+        "version": "1.20.1"
+    },
+    "loader": {
+        "type": "fabric",
+        "version": "0.16.10"
+    }
+}

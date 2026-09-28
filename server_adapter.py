@@ -10,10 +10,6 @@ class ServerAdapter:
         self.server_path = Path(server_path)
         self.process = None
 
-    # =========================================================
-    # VALIDACIÓN BÁSICA
-    # =========================================================
-
     def validate_server_path(self):
         if not self.server_path.exists():
             raise RuntimeError(
@@ -24,10 +20,6 @@ class ServerAdapter:
             raise RuntimeError(
                 f"La ruta no es una carpeta:\n{self.server_path}"
             )
-
-    # =========================================================
-    # LOADER
-    # =========================================================
 
     def detect_fabric_from_jar(self):
         pattern = re.compile(
@@ -61,10 +53,6 @@ class ServerAdapter:
     def detect_loader(self):
         self.validate_server_path()
 
-        # -------------------------
-        # FABRIC
-        # -------------------------
-
         fabric = self.detect_fabric_from_jar()
 
         if fabric:
@@ -75,16 +63,7 @@ class ServerAdapter:
         if not libraries.exists():
             return self.unknown_loader()
 
-        # -------------------------
-        # NEOFORGE
-        # -------------------------
-
-        neoforge_path = (
-            libraries
-            / "net"
-            / "neoforged"
-            / "neoforge"
-        )
+        neoforge_path = libraries / "net" / "neoforged" / "neoforge"
 
         if neoforge_path.exists():
             versions = sorted(
@@ -104,16 +83,7 @@ class ServerAdapter:
                     "jar": None
                 }
 
-        # -------------------------
-        # FORGE
-        # -------------------------
-
-        forge_path = (
-            libraries
-            / "net"
-            / "minecraftforge"
-            / "forge"
-        )
+        forge_path = libraries / "net" / "minecraftforge" / "forge"
 
         if forge_path.exists():
             versions = sorted(
@@ -148,10 +118,6 @@ class ServerAdapter:
 
         return self.unknown_loader()
 
-    # =========================================================
-    # MINECRAFT
-    # =========================================================
-
     def detect_minecraft_version(self):
         loader = self.detect_loader()
 
@@ -178,10 +144,6 @@ class ServerAdapter:
 
         return "unknown"
 
-    # =========================================================
-    # MODS
-    # =========================================================
-
     def count_mods(self):
         mods_path = self.server_path / "mods"
 
@@ -191,10 +153,6 @@ class ServerAdapter:
         return len(
             list(mods_path.glob("*.jar"))
         )
-
-    # =========================================================
-    # SERVER.PROPERTIES
-    # =========================================================
 
     def read_server_properties(self):
         properties_path = (
@@ -213,7 +171,6 @@ class ServerAdapter:
             encoding="utf-8",
             errors="replace"
         ) as file:
-
             for line in file:
                 line = line.strip()
 
@@ -245,13 +202,8 @@ class ServerAdapter:
                     "25565"
                 )
             )
-
         except ValueError:
             return 25565
-
-    # =========================================================
-    # PUERTO
-    # =========================================================
 
     def is_port_in_use(self, port=None):
         if port is None:
@@ -273,10 +225,6 @@ class ServerAdapter:
 
         finally:
             sock.close()
-
-    # =========================================================
-    # JAVA
-    # =========================================================
 
     def detect_java(self):
         java_path = shutil.which("java")
@@ -340,14 +288,9 @@ class ServerAdapter:
         try:
             parts = version.split(".")
 
-            # Java 8 viejo:
-            # 1.8.0_xxx
             if parts[0] == "1":
                 return int(parts[1])
 
-            # Java moderno:
-            # 17.0.x
-            # 21.0.x
             return int(parts[0])
 
         except (ValueError, IndexError):
@@ -384,10 +327,6 @@ class ServerAdapter:
 
         return 8
 
-    # =========================================================
-    # INFORMACIÓN GENERAL
-    # =========================================================
-
     def inspect(self):
         self.validate_server_path()
 
@@ -396,61 +335,28 @@ class ServerAdapter:
         java = self.detect_java()
 
         return {
-            "server_path":
-                str(self.server_path),
-
-            "minecraft_version":
-                self.detect_minecraft_version(),
-
-            "loader":
-                loader["type"],
-
-            "loader_version":
-                loader["loader_version"],
-
-            "launcher_version":
-                loader["launcher_version"],
-
-            "server_jar":
-                loader["jar"],
-
-            "mods":
-                self.count_mods(),
-
-            "world":
-                properties.get(
-                    "level-name",
-                    "world"
-                ),
-
-            "port":
-                self.get_server_port(),
-
-            "max_players":
-                properties.get(
-                    "max-players",
-                    "unknown"
-                ),
-
-            "java_found":
-                java["found"],
-
-            "java_path":
-                java["path"],
-
-            "java_version":
-                java["version"],
-
-            "java_major":
-                java["major"],
-
-            "java_required":
-                self.required_java_version()
+            "server_path": str(self.server_path),
+            "minecraft_version": self.detect_minecraft_version(),
+            "loader": loader["type"],
+            "loader_version": loader["loader_version"],
+            "launcher_version": loader["launcher_version"],
+            "server_jar": loader["jar"],
+            "mods": self.count_mods(),
+            "world": properties.get(
+                "level-name",
+                "world"
+            ),
+            "port": self.get_server_port(),
+            "max_players": properties.get(
+                "max-players",
+                "unknown"
+            ),
+            "java_found": java["found"],
+            "java_path": java["path"],
+            "java_version": java["version"],
+            "java_major": java["major"],
+            "java_required": self.required_java_version()
         }
-
-    # =========================================================
-    # PROCESO
-    # =========================================================
 
     def is_running(self):
         return (
@@ -458,11 +364,7 @@ class ServerAdapter:
             and self.process.poll() is None
         )
 
-    def start(
-        self,
-        min_ram="4G",
-        max_ram="8G"
-    ):
+    def start(self, min_ram="4G", max_ram="8G"):
         self.validate_server_path()
 
         if self.is_running():
@@ -500,8 +402,6 @@ class ServerAdapter:
                 f"{java['major']}."
             )
 
-        # Por ahora nuestro launcher real funciona
-        # con Fabric.
         if loader["type"] != "fabric":
             raise RuntimeError(
                 f"Se detectó {loader['type']}, "
@@ -566,13 +466,3 @@ class ServerAdapter:
             return
 
         self.process.kill()
-
-    def wait(self):
-        if self.process is None:
-            return None
-
-        return_code = self.process.wait()
-
-        self.process = None
-
-        return return_code

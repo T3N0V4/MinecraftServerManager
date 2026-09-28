@@ -1,13 +1,14 @@
-from server_adapter import ServerAdapter
-from gui import ServerGUI
-
-
-SERVER_PATH = r"C:\Minecraft\HORIZONS_CHUNK_SERVER\Server"
+from gui import ServerManagerGUI
+from profile_manager import ProfileManager
 
 
 def main():
-    adapter = ServerAdapter(SERVER_PATH)
-    app = ServerGUI(adapter)
+    profile_manager = ProfileManager()
+
+    app = ServerManagerGUI(
+        profile_manager
+    )
+
     app.run()
 
 
